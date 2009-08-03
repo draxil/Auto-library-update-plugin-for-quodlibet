@@ -18,32 +18,45 @@ class AutoLibraryUpdate ( EventPlugin ):
     PLUGIN_DESC = "Keep your quodlibet library up-to-date with inotify"
     PLUGIN_VERSION = "0.1"
     
+    library = None
+    wm = None
+    tn = None
+    event_handler = None
+    running = False
+
     # Set everything up:
     def __init__( self ):
-        from player import playlist as player
         from quodlibet.library import library as library
-        print library
+
         self.library = library
-
-        wm = WatchManager()
-
-        event_handler = self.ALE( self )
-
-        tn = ThreadedNotifier( wm, event_handler )
-        tn.daemon = True
-
-        tn.start()
-
-        FLAGS=EventsCodes.ALL_FLAGS
-        mask = FLAGS['IN_DELETE'] | FLAGS['IN_CLOSE_WRITE']  # watched events
-
-        # watch paths in scan_list:
-        for path in self.scan_list():
-            log ( 'Adding watch: for ' + path )
-            wm.add_watch( path, mask, rec=True )
     
+    def enabled( self ):
+        if not self.running :
+            self.wm = WatchManager()
+
+            self.event_handler = self.ALE( self )
+
+            self.tn = ThreadedNotifier( self.wm, self.event_handler )
+            self.tn.daemon = True
+
+            self.tn.start()
+
+            FLAGS=EventsCodes.ALL_FLAGS
+            mask = FLAGS['IN_DELETE'] | FLAGS['IN_CLOSE_WRITE']  # watched events
+
+            # watch paths in scan_list:
+            for path in self.scan_list():
+                log ( 'Adding watch: for ' + path )
+                self.wm.add_watch( path, mask, rec=True )
+            self.running = True
+
+    def disabled( self ):
+        if self.running:
+            self.running = False
+            self.tn.stop()
+
     # find list of directories to scan
-    def scan_list(self):
+    def scan_list( self ):
         return config.get( "settings", "scan").split(":")
 
     # auto-library-event class, handles the events
@@ -53,6 +66,8 @@ class AutoLibraryUpdate ( EventPlugin ):
         
         # process close-write event
         def process_IN_CLOSE_WRITE(self, event):
+            if not self._alu.running: 
+                return
             glib.idle_add( self.add_event, event )
 
         def add_event ( self, event ):
@@ -70,7 +85,7 @@ class AutoLibraryUpdate ( EventPlugin ):
             log( 'removing %s from library' % item )
             if item:
                 self._alu.library.reload(item)
-
+            return False
 
 def log(msg):
     if verbose:
