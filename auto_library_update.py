@@ -1,4 +1,9 @@
 # Automatic library update plugin
+#
+# (c) 2009 joe higton
+#
+# Licensed under GPLv2. See Quod Libet's COPYING for more information.
+#
 
 import os
 from pyinotify import WatchManager, ThreadedNotifier, EventsCodes, ProcessEvent
@@ -8,7 +13,7 @@ import config
 import glib
 
 # Set this to True to enable logging
-verbose = True
+verbose = False
 
 class AutoLibraryUpdate ( EventPlugin ):
     
@@ -29,30 +34,34 @@ class AutoLibraryUpdate ( EventPlugin ):
         from quodlibet.library import library as library
 
         self.library = library
-    
+
+    # enabled hook, get everything cooking:
     def enabled( self ):
         if not self.running :
             self.wm = WatchManager()
-
+            
+            # the event handler will do the actual event processing,
+            # see the ALE class below for details
             self.event_handler = self.ALE( self )
-
+            
+            # we'll use a threaded notifier flagged as a daemon thread
+            # so that it will stop when QL does
             self.tn = ThreadedNotifier( self.wm, self.event_handler )
             self.tn.daemon = True
-
             self.tn.start()
 
-            FLAGS=EventsCodes.ALL_FLAGS
-            
             # mask for watched events:
+            FLAGS=EventsCodes.ALL_FLAGS
             mask = FLAGS['IN_DELETE'] | FLAGS['IN_CLOSE_WRITE']\
-                   | FLAGS['IN_MOVED_FROM'] | FLAGS['IN_MOVED_TO']
+                | FLAGS['IN_MOVED_FROM'] | FLAGS['IN_MOVED_TO']
 
             # watch paths in scan_list:
             for path in self.scan_list():
                 log ( 'Adding watch: for ' + path )
                 self.wm.add_watch( path, mask, rec=True )
             self.running = True
-
+    
+    # disable hook, stop the notifier:
     def disabled( self ):
         if self.running:
             self.running = False
@@ -84,14 +93,14 @@ class AutoLibraryUpdate ( EventPlugin ):
 
         # process delete event
         def process_IN_DELETE(self, event):
-            glib.idle_add( self.process_event, event )
+            glib.idle_add( self.check_event, event )
 
         # process the moved-from event:
         def process_IN_MOVED_FROM( self, event ):
-            glib.idle_add( self.process_event, event )
+            glib.idle_add( self.check_event, event )
         
         # general "check to see if it's still there" callback:
-        def process_event( self, event ):
+        def check_event( self, event ):
             item = self._alu.library.__getitem__( os.path.join(event.path, event.name) )
             log( 'removing %s from library' % item )
             if item:
