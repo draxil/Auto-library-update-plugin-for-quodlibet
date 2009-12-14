@@ -11,9 +11,10 @@ from pyinotify import WatchManager, ThreadedNotifier, EventsCodes, ProcessEvent
 from plugins.events import EventPlugin
 import config
 import glib
+import re
 
 # Set this to True to enable logging
-verbose = False
+verbose = True
 
 class AutoLibraryUpdate ( EventPlugin ):
     
@@ -59,6 +60,7 @@ class AutoLibraryUpdate ( EventPlugin ):
             for path in self.scan_list():
                 log ( 'Adding watch: for ' + path )
                 self.wm.add_watch( path, mask, rec=True )
+
             self.running = True
     
     # disable hook, stop the notifier:
@@ -75,19 +77,27 @@ class AutoLibraryUpdate ( EventPlugin ):
     class ALE( ProcessEvent ):
         def __init__( self, alu ):
             self._alu = alu
-        
+            log("alu : %s" % alu )
         # process close-write event (  copy, new file etc )
         def process_IN_CLOSE_WRITE(self, event):
             glib.idle_add( self.add_event, event )
 
         # process moved-to event:
         def process_IN_MOVED_TO( self, event ):
+            log( 'moved event' )
             glib.idle_add( self.add_event, event )
 
         # general we think we added something callback:
         def add_event ( self, event ):
-            item =  self._alu.library.add_filename ( os.path.join(event.path, event.name) )
-            if item:
+            lib = self._alu.library
+            path = os.path.join(event.path, event.name)
+            if event.dir:
+                for path, dnames, fnames in os.walk(path):
+                    for filename in fnames:
+                        fullfilename = os.path.join(path, filename)
+                        lib.add_filename(fullfilename)
+            else:
+                item =  lib.add_filename ( path )
                 log( '%s added to library' % item )
             return False
 
@@ -101,10 +111,30 @@ class AutoLibraryUpdate ( EventPlugin ):
         
         # general "check to see if it's still there" callback:
         def check_event( self, event ):
-            item = self._alu.library.__getitem__( os.path.join(event.path, event.name) )
-            log( 'removing %s from library' % item )
-            if item:
-                self._alu.library.reload(item)
+            lib = self._alu.library
+            path = os.path.join(event.path, event.name)
+
+            log( 'check (%s) event for %s' %  (event.path, path) )
+
+            if event.dir:
+                log( 'scan? %s ' % path )
+                path_re = re.compile('^' + path)
+                to_reload = []
+                for i in lib._contents:
+                    if path_re.match( i ):
+                        try:
+                            item = lib.__getitem__( i )
+                        except:
+                            pass
+                        if item:
+                            to_reload.append(item)
+                for item in to_reload:
+                    lib.reload( item )
+            else:
+                item = lib.__getitem__( path )
+                log( 'removing %s from library' % item )
+                if item:
+                    lib.reload(item)
             return False
 
 def log(msg):
